@@ -1,0 +1,12 @@
+flutter_native_splash:
+  android: true
+  ios: true
+  web: false
+  color: "#ffffff"
+  # نستخدم النسخة الأصلية العالية الدقة (الماستر) لتوليد splash
+  # لتجنّب ظهور الأيقونة مضبّبة عند التوليد على شاشات عالية الدقّة،
+  # مع إبقاء assets/images/app_icon.png في الكود لاستخدام الواجهة (عبر UI).
+  image: tools/app_icon_master.png
+  android_gravity: center
+  ios_content_mode: center
+  fullscreen: false

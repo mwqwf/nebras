@@ -1,0 +1,12 @@
+{
+	"$schema": "https://openapi.vercel.sh/vercel.json",
+	"installCommand": "npm install --prefix Nebras_dashboard-main/dashboard",
+	"buildCommand": "npm run build --prefix Nebras_dashboard-main/dashboard && rm -rf .vercel/output && mkdir -p .vercel && cp -r Nebras_dashboard-main/dashboard/.vercel/output .vercel/output",
+	"framework": null,
+	"crons": [
+		{
+			"path": "/api/cron/aggregates-popularity",
+			"schedule": "0 3 * * *"
+		}
+	]
+}

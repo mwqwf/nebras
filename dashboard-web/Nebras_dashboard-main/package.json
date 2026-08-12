@@ -1,0 +1,9 @@
+{
+	"private": true,
+	"name": "nebras-dashboard",
+	"scripts": {
+		"dev": "npm run dev --prefix dashboard",
+		"build": "npm run build --prefix dashboard",
+		"preview": "npm run preview --prefix dashboard"
+	}
+}

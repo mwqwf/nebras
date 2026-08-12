@@ -1,0 +1,229 @@
+/**
+ * adminUploader.js — رفع buffer كتاب هنداوي إلى Firebase Storage (Admin) ثمّ
+ * كتابة السجلّ في Firestore بنفس شكل storageUpload.js (ليقرأه التطبيق).
+ *
+ * مطابق لمُحمّل مكتبة نور لكن بعلامات مصدر هنداوي مستقلّة:
+ *   • fileId بادئة `hindawi_`
+ *   • مسار Storage `dashboard/hindawi/{fileId}/...`
+ *   • __provider: 'hindawi'  → يسمح بـ factory reset مستقلّ لكتب هنداوي.
+ *
+ * 🔒 Nebras Only — لا يلمس Mshcat/OldApp.
+ */
+
+import { randomUUID } from 'node:crypto';
+import { getStorage } from 'firebase-admin/storage';
+import { FieldValue } from 'firebase-admin/firestore';
+import { getNebrasAdminApp } from '$lib/server/firebaseAdmin.js';
+import { adminFsWriteFileMirrorBoth } from '$lib/server/nebrasUnifiedFirestoreAdmin.js';
+import { stripUndefinedDeep } from '$lib/nebrasUnifiedSanitize.js';
+import { writeAuditEntry } from '$lib/server/auditLog.js';
+
+const NEBRAS_PROJECT_ID = 'nebras-9118c';
+const PROVIDER = 'hindawi';
+
+function assertNebrasApp(app) {
+	const projectId = app?.options?.projectId || '';
+	if (projectId !== NEBRAS_PROJECT_ID) {
+		throw Object.assign(
+			new Error(`عُزل صارم انتُهك: محرّك هنداوي يجب أن يستخدم Nebras (${NEBRAS_PROJECT_ID}) فقط، لكنّه تلقّى "${projectId}".`),
+			{ reason: 'target_isolation_violated', status: 500 }
+		);
+	}
+}
+
+function sanitizeSegment(name) {
+	return (
+		String(name || 'file')
+			.trim()
+			.replace(/[-]/g, '')
+			.replace(/[#$\[\]./\\:*?"<>|]+/g, '_')
+			.slice(0, 180) || 'file'
+	);
+}
+
+function buildDownloadUrl(bucketName, objectPath, token) {
+	const encoded = encodeURIComponent(objectPath);
+	return `https://firebasestorage.googleapis.com/v0/b/${bucketName}/o/${encoded}?alt=media&token=${token}`;
+}
+
+/** هنداوي = كتب PDF حصراً → content_type دائماً 'document'. */
+function buildMobileCompatibleFields(metadata, downloadUrl) {
+	const normalized = metadata && typeof metadata === 'object' ? metadata : {};
+	return {
+		id: normalized.id || undefined,
+		title: normalized.title || undefined,
+		description: normalized.description || undefined,
+		author: normalized.author || undefined,
+		thumbnail: normalized.thumbnail || undefined,
+		content_type: normalized.content_type || 'document',
+		subsection: normalized.subsection,
+		subsection_name: normalized.subsection_name || undefined,
+		secondary_subsection: normalized.secondary_subsection,
+		secondary_subsection_name: normalized.secondary_subsection_name || undefined,
+		main_section: normalized.main_section,
+		main_section_id: normalized.main_section_id,
+		main_section_name: normalized.main_section_name,
+		sourceUrl: downloadUrl,
+		source_url: downloadUrl,
+		file_url: downloadUrl
+	};
+}
+
+async function uploadExternalThumbnail(thumbnailUrl, fileId, ctx) {
+	if (!thumbnailUrl) return null;
+	let res;
+	try {
+		res = await fetch(thumbnailUrl, {
+			headers: { 'User-Agent': 'NebrasDashboard/1.0' },
+			redirect: 'follow'
+		});
+	} catch {
+		return null;
+	}
+	if (!res.ok) return null;
+	const ct = res.headers.get('content-type') || 'image/jpeg';
+	if (!ct.startsWith('image/')) return null;
+	const buf = Buffer.from(await res.arrayBuffer());
+	if (buf.byteLength > 10 * 1024 * 1024) return null;
+	const ext = ct.includes('png') ? 'png' : ct.includes('webp') ? 'webp' : 'jpg';
+	const objectPath = `dashboard/content/${fileId}/thumbnail_${Date.now()}.${ext}`;
+	const token = randomUUID();
+	const bucket = getStorage(ctx.adminApp).bucket(ctx.bucketName);
+	await bucket.file(objectPath).save(buf, {
+		contentType: ct,
+		resumable: false,
+		metadata: {
+			contentType: ct,
+			metadata: {
+				firebaseStorageDownloadTokens: token,
+				uploadedByUid: ctx.uploaderUid || '',
+				uploadedAt: new Date().toISOString(),
+				source: PROVIDER
+			}
+		}
+	});
+	return buildDownloadUrl(ctx.bucketName, objectPath, token);
+}
+
+/**
+ * يرفع PDF هنداوي ويكتب السجلّ في مجموعتي Firestore الموازيتين.
+ * @param {{ buffer:Buffer, contentType:string, filename:string, thumbnailUrl?:string,
+ *   metadata:object, uploader:object, source?:object }} args
+ */
+export async function adminUploadAndRegister(args) {
+	const { buffer, contentType, filename, thumbnailUrl, metadata, uploader, source } = args;
+
+	if (!Buffer.isBuffer(buffer) || buffer.byteLength === 0) {
+		throw Object.assign(new Error('buffer فارغ.'), { reason: 'empty_buffer', status: 400 });
+	}
+	if (!metadata?.title) {
+		throw Object.assign(new Error('metadata.title مطلوب.'), { reason: 'metadata_title_required', status: 400 });
+	}
+	if (!metadata?.subsection) {
+		throw Object.assign(new Error('metadata.subsection مطلوب.'), { reason: 'metadata_subsection_required', status: 400 });
+	}
+
+	const adminApp = getNebrasAdminApp();
+	assertNebrasApp(adminApp);
+	const bucketName = adminApp.options?.storageBucket;
+	if (!bucketName) {
+		throw Object.assign(new Error('NEBRAS_STORAGE_BUCKET غير مضبوط.'), { reason: 'storage_bucket_missing', status: 501 });
+	}
+
+	const fileId = `hindawi_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+	const safeName = sanitizeSegment(filename || 'book.pdf');
+	const objectPath = `dashboard/hindawi/${fileId}/${Date.now()}_${safeName}`;
+	const token = randomUUID();
+
+	const ctx = { adminApp, bucketName, uploaderUid: uploader?.uid || '' };
+	let resolvedThumbnail = null;
+	if (thumbnailUrl) resolvedThumbnail = await uploadExternalThumbnail(thumbnailUrl, fileId, ctx);
+
+	const finalContentType = contentType || 'application/pdf';
+	const bucket = getStorage(adminApp).bucket(bucketName);
+	await bucket.file(objectPath).save(buffer, {
+		contentType: finalContentType,
+		resumable: false,
+		metadata: {
+			contentType: finalContentType,
+			metadata: {
+				firebaseStorageDownloadTokens: token,
+				uploadedByUid: uploader?.uid || '',
+				uploadedByEmail: uploader?.email || '',
+				uploadedAt: new Date().toISOString(),
+				source: source?.provider || PROVIDER,
+				sourceUrl: source?.url || '',
+				sourceBookId: source?.bookId || ''
+			}
+		}
+	});
+
+	const downloadUrl = buildDownloadUrl(bucketName, objectPath, token);
+
+	const finalMetadata = {
+		...metadata,
+		thumbnail: resolvedThumbnail || metadata.thumbnail || null,
+		content_type: 'document',
+		is_listed: metadata.is_listed ?? true,
+		created_at: new Date().toISOString()
+	};
+	const compatible = buildMobileCompatibleFields(finalMetadata, downloadUrl);
+
+	const payload = stripUndefinedDeep({
+		fileId,
+		id: fileId,
+		downloadUrl,
+		filename,
+		fileType: finalContentType,
+		fileSize: buffer.byteLength,
+		metadata: finalMetadata,
+		storagePath: objectPath,
+		createdAt: FieldValue.serverTimestamp(),
+		__provider: source?.provider || PROVIDER,
+		__sourceUrl: source?.url || '',
+		__sourceBookId: source?.bookId || '',
+		__license: source?.license || 'creative_commons',
+		// ────────── ⚖️ Google Play / DMCA compliance metadata ──────────
+		// هنداوي تنشر تحت Creative Commons / ملكيّة عامّة → verified_open_license.
+		// التطبيق يقرأ هذه الحقول لعرض الإسناد ولحجب أيّ عنصر يُوضَع 'rejected'.
+		__source_provider: source?.provider || PROVIDER,
+		__license_status: source?.licenseStatus || 'verified_open_license',
+		__license_url: source?.licenseUrl || '',
+		__compliance_version: '2026.05',
+		__verified_at: new Date().toISOString(),
+		...compatible
+	});
+
+	await adminFsWriteFileMirrorBoth(fileId, payload);
+
+	// سجلّ تدقيق موحَّد — يُثبت لكلّ عمليّة استيراد المصدر والترخيص والـ
+	// uploader، يُستعمل للردّ على أيّ شكوى DMCA لاحقاً وللمراجعة الداخليّة.
+	await writeAuditEntry({
+		action: 'import',
+		provider: PROVIDER,
+		contentId: fileId,
+		contentType: 'document',
+		licenseStatus: payload.__license_status,
+		licenseName: source?.license?.name || '',
+		licenseUrl: payload.__license_url || source?.license?.url || '',
+		sourceUrl: source?.url || '',
+		actorUid: uploader?.uid || '',
+		actorEmail: uploader?.email || '',
+		result: 'ok',
+		meta: {
+			bookId: source?.bookId || '',
+			fileSize: buffer.byteLength,
+			licenseConfidence: source?.license?.confidence || ''
+		}
+	});
+
+	return {
+		fileId,
+		downloadUrl,
+		storagePath: objectPath,
+		contentType: finalContentType,
+		size: buffer.byteLength,
+		thumbnailUrl: resolvedThumbnail,
+		payload
+	};
+}

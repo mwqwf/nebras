@@ -1,0 +1,324 @@
+════════════════════════════════════════════════════════════════════════════════
+  Nebras Dashboard — Firebase Rules Update
+════════════════════════════════════════════════════════════════════════════════
+
+هذا الملف يحوي القواعد الكاملة لـ Realtime Database و Cloud Storage التي يجب
+تطبيقها على مشروع Nebras الأساسيّ (nebras-9118c) لكي يعمل:
+
+  1) سكريبت الجلب من مكتبة نور (Noor Library Fetcher)
+  2) نظام رفع الملفّات الموحَّد (Smart Router → Storage Writer)
+  3) كتابة سجلات `dashboard_uploads/{fileId}` و `content_unified/files/{fileId}`
+  4) قراءة الأقسام `sections_unified/*` من العملاء (مدير/مشرف)
+
+نموذج الأدوار المعتمد في hooks.server.js:
+  • role === 'owner'        → صلاحيّات كاملة (CRUD على كلّ شيء)
+  • role === 'supervisor'   → كتابة على المحتوى/الأقسام
+  • role === 'admin'        → يُترجَم تلقائيّاً إلى 'supervisor'
+  • أي شيء آخر / محظور      → قراءة فقط حسب القاعدة
+
+ملاحظة معماريّة مهمّة:
+  جميع نقاط /api/admin/* و /api/mshcat/* و /api/oldapp/* تمرّ عبر Admin SDK
+  من جانب الخادم، وهو يتجاوز هذه القواعد. القواعد أدناه تحمي:
+    • الكتابات المباشرة من المتصفّح عبر Web SDK (Nebras فقط).
+    • القراءات المباشرة من تطبيق الموبايل/المتصفّح.
+    • أيّ محاولة كتابة من عميل غير مصرّح (Defense-in-depth).
+
+────────────────────────────────────────────────────────────────────────────────
+  1) Realtime Database Rules
+  المسار في Firebase Console: Realtime Database → Rules
+────────────────────────────────────────────────────────────────────────────────
+
+{
+  "rules": {
+
+    // ── دوال مساعدة (Functions) ───────────────────────────────
+    // RTDB لا تدعم تعريف functions صراحةً، لذا نُكرّر التحقّق inline
+    // عبر مرجع دائم إلى dashboard_users/$auth.uid/role.
+
+    // ── سجلّات المستخدمين الإداريّين ──────────────────────────
+    // كلّ مستخدم يقرأ سجلّه فقط؛ المالك يقرأ/يكتب الجميع.
+    "dashboard_users": {
+      ".read":  "auth != null && root.child('dashboard_users').child(auth.uid).child('role').val() === 'owner'",
+      ".write": "auth != null && root.child('dashboard_users').child(auth.uid).child('role').val() === 'owner'",
+      "$uid": {
+        ".read":  "auth != null && (auth.uid === $uid || root.child('dashboard_users').child(auth.uid).child('role').val() === 'owner')",
+        ".write": "auth != null && root.child('dashboard_users').child(auth.uid).child('role').val() === 'owner'"
+      }
+    },
+
+    // ── شجرة الأقسام (Strict Hierarchy) ───────────────────────
+    // قراءة عامّة (تطبيق الموبايل يحتاجها). الكتابة لـ owner أو supervisor.
+    // التحقّق يتأكّد من بقاء حقل `is_listed` boolean والاسم non-empty string.
+    "sections_unified": {
+      ".read": true,
+
+      "main": {
+        ".read": true,
+        ".write": "auth != null && (root.child('dashboard_users').child(auth.uid).child('role').val() === 'owner' || root.child('dashboard_users').child(auth.uid).child('role').val() === 'supervisor')",
+        "$mainId": {
+          ".validate": "newData.hasChild('id') && newData.child('name').isString() && newData.child('name').val().length > 0"
+        }
+      },
+
+      "sub": {
+        ".read": true,
+        ".write": "auth != null && (root.child('dashboard_users').child(auth.uid).child('role').val() === 'owner' || root.child('dashboard_users').child(auth.uid).child('role').val() === 'supervisor')",
+        "$subId": {
+          ".validate": "newData.hasChild('id') && newData.hasChild('main_section') && newData.child('name').isString() && newData.child('name').val().length > 0"
+        }
+      },
+
+      "secondary": {
+        ".read": true,
+        ".write": "auth != null && (root.child('dashboard_users').child(auth.uid).child('role').val() === 'owner' || root.child('dashboard_users').child(auth.uid).child('role').val() === 'supervisor')",
+        "$secId": {
+          ".validate": "newData.hasChild('id') && newData.hasChild('sub_section') && newData.child('name').isString() && newData.child('name').val().length > 0"
+        }
+      }
+    },
+
+    // ── المحتوى الموحَّد (Files + YouTube + Mirrors) ──────────
+    // قراءة عامّة، كتابة لـ owner/supervisor فقط.
+    // مهم: مسار `content_unified/files/{fileId}` يُستخدم كـ FALLBACK
+    // عند فشل الكتابة على dashboard_uploads (راجع storageUpload.js)،
+    // ويُستخدم أيضاً كـ MIRROR من سكريبت Noor Library Fetcher.
+    "content_unified": {
+      ".read": true,
+
+      "files": {
+        ".read": true,
+        ".write": "auth != null && (root.child('dashboard_users').child(auth.uid).child('role').val() === 'owner' || root.child('dashboard_users').child(auth.uid).child('role').val() === 'supervisor')",
+        "$fileId": {
+          ".validate": "newData.hasChild('id') || newData.hasChild('fileId')"
+        }
+      },
+
+      "youtube": {
+        ".read": true,
+        ".write": "auth != null && (root.child('dashboard_users').child(auth.uid).child('role').val() === 'owner' || root.child('dashboard_users').child(auth.uid).child('role').val() === 'supervisor')",
+        "$videoId": {
+          ".validate": "newData.hasChild('id') && newData.child('video_url').isString()"
+        }
+      }
+    },
+
+    // ── سجلّات الرفع المباشر (Storage Writer Output) ──────────
+    // المسار الأساسيّ الذي يكتب فيه storageUpload.js. owner/supervisor فقط.
+    "dashboard_uploads": {
+      ".read":  "auth != null && (root.child('dashboard_users').child(auth.uid).child('role').val() === 'owner' || root.child('dashboard_users').child(auth.uid).child('role').val() === 'supervisor')",
+      ".write": "auth != null && (root.child('dashboard_users').child(auth.uid).child('role').val() === 'owner' || root.child('dashboard_users').child(auth.uid).child('role').val() === 'supervisor')",
+      "$fileId": {
+        ".validate": "newData.hasChild('fileId') || newData.hasChild('id')"
+      }
+    },
+
+    // ── سجلّات سكريبت Noor Library Fetcher (الإصدار اليدوي القديم) ────
+    // المسار الذي يكتب فيه /api/admin/noor-library/import حالة كلّ مهمّة
+    // جلب — للاطلاع/التتبّع من واجهة لوحة التحكّم. owner/supervisor فقط.
+    "noor_library_jobs": {
+      ".read":  "auth != null && (root.child('dashboard_users').child(auth.uid).child('role').val() === 'owner' || root.child('dashboard_users').child(auth.uid).child('role').val() === 'supervisor')",
+      ".write": "auth != null && (root.child('dashboard_users').child(auth.uid).child('role').val() === 'owner' || root.child('dashboard_users').child(auth.uid).child('role').val() === 'supervisor')"
+    },
+
+    // ── محرّك الجلب الآلي (Autonomous Engine) ─────────────────────────
+    //   • config: enabled flag + seedUrls + throttle
+    //   • cursor: نقطة الاستئناف (seedIndex/page)
+    //   • stats:  totalFetched + sectionsCreated + lastRunAt + lastError
+    //   • log:    آخر 60 حدث (نجاح/خطأ/معلومة)
+    // كلّ شيء يُكتب فقط من Admin SDK، لكن نسمح بالقراءة لـ owner/supervisor
+    // لكي يستطيع الـ UI استعراض الحالة (لو فعّلنا real-time listener مستقبلاً).
+    "noor_library_engine": {
+      ".read":  "auth != null && (root.child('dashboard_users').child(auth.uid).child('role').val() === 'owner' || root.child('dashboard_users').child(auth.uid).child('role').val() === 'supervisor')",
+      ".write": "auth != null && root.child('dashboard_users').child(auth.uid).child('role').val() === 'owner'"
+    },
+
+    // ── سجلّ منع التكرار (Registry) ───────────────────────────────────
+    // مفتاح كلّ كتاب = bookId من مكتبة نور. الكتابة من Admin SDK حصراً
+    // (لن يكتبها أيّ متصفّح). نسمح للـ owner بالقراءة للتدقيق.
+    "noor_library_registry": {
+      ".read":  "auth != null && (root.child('dashboard_users').child(auth.uid).child('role').val() === 'owner' || root.child('dashboard_users').child(auth.uid).child('role').val() === 'supervisor')",
+      ".write": "auth != null && root.child('dashboard_users').child(auth.uid).child('role').val() === 'owner'"
+    },
+
+    // ── رموز OTP الخاصّة بالمالك (يُكتَب من Admin SDK فقط) ────
+    // لا نسمح للعملاء بقراءتها أو الكتابة عليها — Admin SDK يتجاوز هذا.
+    "dashboard_owner_codes": {
+      ".read": false,
+      ".write": false
+    },
+
+    // ── أيّ مسار آخر مرفوض افتراضيّاً ─────────────────────────
+    "$other": {
+      ".read": false,
+      ".write": false
+    }
+  }
+}
+
+
+────────────────────────────────────────────────────────────────────────────────
+  2) Cloud Storage Rules
+  المسار في Firebase Console: Storage → Rules
+  Bucket: nebras-9118c.firebasestorage.app
+────────────────────────────────────────────────────────────────────────────────
+
+rules_version = '2';
+
+service firebase.storage {
+  match /b/{bucket}/o {
+
+    // ── دوال مساعدة ──────────────────────────────────────────
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function userRole() {
+      return firestore.get(
+        /databases/(default)/documents/dashboard_users/$(request.auth.uid)
+      ).data.role;
+    }
+
+    // ملاحظة: قواعد Storage لا تستطيع قراءة Realtime Database مباشرةً.
+    // الحلّ المعتمد: نسجّل دور كلّ مستخدم في Firebase Auth Custom Claims
+    // عند ترقيته إلى supervisor/owner، فيصبح الدور متاحاً عبر:
+    //   request.auth.token.role
+    // إن لم تكن قد فعَّلت Custom Claims بعد، استخدم الفرع البديل في الأسفل.
+
+    function hasOwnerOrSupervisor() {
+      return isSignedIn() && (
+        request.auth.token.role == 'owner' ||
+        request.auth.token.role == 'supervisor' ||
+        // ⚠️ Fallback ضروري لتعرّف اللوحة على المالك إذا لم تنتشر Custom
+        // Claims بعد. ضع هنا بريد المالك الفعليّ من القاعدة التشغيليّة
+        // (يُقرَأ من `storage.rules` التشغيليّ — لا تطبع البريد علناً).
+        request.auth.token.email == '<OWNER_EMAIL_PLACEHOLDER>'
+      );
+    }
+
+    function isValidUpload() {
+      // 200 ميغا حدّ أقصى لكل ملف (مرَن — عدّل حسب الحاجة).
+      return request.resource.size < 200 * 1024 * 1024
+        && request.resource.contentType.matches('(image|video|audio|application)/.*');
+    }
+
+    // ── محتوى لوحة التحكّم (الملفّات الفعلية + الـ thumbnails) ─
+    // المسار الذي يكتب فيه storageUpload.js → firebaseUploadContentFile
+    // و uploadContentThumbnail. القراءة عامّة (ليتمكّن تطبيق الموبايل من
+    // عرض المحتوى)؛ الكتابة لـ owner/supervisor فقط.
+    match /dashboard/content/{fileId}/{allPaths=**} {
+      allow read: if true;
+      allow write: if hasOwnerOrSupervisor() && isValidUpload();
+    }
+
+    // ── الرفع العام المباشر إلى Nebras (من smartUpload.js) ────
+    match /dashboard/uploads/{allPaths=**} {
+      allow read: if true;
+      allow write: if hasOwnerOrSupervisor() && isValidUpload();
+    }
+
+    // ── thumbnails الأقسام (sections/*) ──────────────────────
+    // يكتب فيه moderator.js → uploadSectionThumbnail عند المسارات
+    // sections/main/{id}/... و sections/sub/{id}/... وهكذا.
+    match /sections/{level}/{sectionId}/{allPaths=**} {
+      allow read: if true;
+      allow write: if hasOwnerOrSupervisor()
+        && request.resource.size < 10 * 1024 * 1024
+        && request.resource.contentType.matches('image/.*');
+    }
+
+    // ── ملفات سكريبت Noor Library Fetcher ─────────────────────
+    // المسار المخصَّص لمحتوى مكتبة نور المُجلَب آلياً.
+    match /dashboard/noor-library/{bookId}/{allPaths=**} {
+      allow read: if true;
+      allow write: if hasOwnerOrSupervisor() && isValidUpload();
+    }
+
+    // ── منع كل ما عدا ذلك ─────────────────────────────────────
+    match /{path=**} {
+      allow read: if false;
+      allow write: if false;
+    }
+  }
+}
+
+
+────────────────────────────────────────────────────────────────────────────────
+  3) (اختياري ولكن مُوصى به) — تفعيل Custom Claims للأدوار
+────────────────────────────────────────────────────────────────────────────────
+
+قواعد Storage أعلاه تعتمد على `request.auth.token.role` (Custom Claim). يجب
+ترقية المستخدمين لمرّة واحدة عبر سكريبت Admin SDK لمنحهم الـ claim المناسب،
+وإلّا ستفشل الكتابة لكل من ليس "المالك الرسميّ" بالبريد.
+
+كود الترقية (يُنفَّذ مرّة واحدة في Node.js مع Admin SDK):
+
+  // upgrade-roles.mjs — شغّله من جذر dashboard/
+  import { initializeApp, cert } from 'firebase-admin/app';
+  import { getAuth } from 'firebase-admin/auth';
+  import { getDatabase } from 'firebase-admin/database';
+  import { readFileSync } from 'node:fs';
+
+  const sa = JSON.parse(readFileSync('./secrets/serviceAccountKey.json', 'utf8'));
+  initializeApp({
+    credential: cert(sa),
+    databaseURL: 'https://nebras-9118c-default-rtdb.firebaseio.com'
+  });
+
+  const usersSnap = await getDatabase().ref('dashboard_users').get();
+  if (!usersSnap.exists()) process.exit(0);
+  for (const [uid, data] of Object.entries(usersSnap.val() || {})) {
+    const role = data.role === 'admin' ? 'supervisor' : (data.role || 'supervisor');
+    await getAuth().setCustomUserClaims(uid, { role });
+    console.log(`✓ ${uid} → role=${role}`);
+  }
+
+ملاحظة: يجب على المستخدم تسجيل الخروج/الدخول مرّة واحدة بعد ترقية الـ claim
+لكي يُحدَّث الـ ID Token الذي يحمله متصفّحه.
+
+
+────────────────────────────────────────────────────────────────────────────────
+  4) قواعد المشاريع الثانويّة (Mshcat / OldApp) — مرجعيّة فقط
+────────────────────────────────────────────────────────────────────────────────
+
+كلّ كتابة على مشروعَيْ Mshcat و OldApp تمرّ عبر Admin SDK من جانب الخادم
+(انظر uploadBridge.js و /api/mshcat/* و /api/oldapp/*)، فلا حاجة لتعديل
+قواعد العميل في تلك المشاريع. القراءة العامّة عبر Web SDK تكفي حالياً
+وهي مفعّلة افتراضيّاً في القواعد الموجودة هناك.
+
+إن أردت إحكام الحماية مستقبلاً، طبّق نفس مبدأ "قراءة عامّة + كتابة محظورة
+من العميل" في Firestore Rules لكلا المشروعين:
+
+  rules_version = '2';
+  service cloud.firestore {
+    match /databases/{database}/documents {
+      match /{document=**} {
+        allow read: if true;
+        allow write: if false;  // الكتابة عبر Admin SDK فقط
+      }
+    }
+  }
+
+
+════════════════════════════════════════════════════════════════════════════════
+  ✅ خطوات التطبيق
+════════════════════════════════════════════════════════════════════════════════
+
+  1) Realtime Database:
+     - Firebase Console → Realtime Database → Rules
+     - الصق محتوى الفقرة (1) كاملاً
+     - Publish
+
+  2) Storage:
+     - Firebase Console → Storage → Rules
+     - الصق محتوى الفقرة (2) كاملاً
+     - Publish
+
+  3) (مرّة واحدة) شغّل سكريبت الترقية في الفقرة (3) لمنح كلّ مشرف Custom Claim.
+
+  4) اختبر بسرعة عبر:
+     curl -X POST 'http://localhost:5173/api/admin/noor-library/preview' \
+       -H "Authorization: Bearer <ID_TOKEN>" \
+       -H "Content-Type: application/json" \
+       -d '{"url":"https://www.noor-book.com/book/review/<id>"}'
+
+     يجب أن يُرجع JSON بحقول metadata + suggestedPath بدلاً من 401/403.

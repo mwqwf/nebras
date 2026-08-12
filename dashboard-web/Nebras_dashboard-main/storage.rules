@@ -1,0 +1,122 @@
+rules_version = '2';
+
+// ════════════════════════════════════════════════════════════════════
+//  Cloud Storage Rules — Nebras Dashboard (nebras-9118c)
+//
+//  مهم: هذه القواعد تعتمد على Firebase Auth Custom Claims (request.auth.token.role).
+//  إذا لم تكن قد رقّيت المستخدمين بعد، استعمل سكريبت الترقية في
+//  firebase-rules-update.txt الفقرة 3 لمنحهم الـ claim المناسب
+//  (role = 'owner' أو 'supervisor').
+//
+//  ملاحظة معماريّة: كلّ الكتابة من /api/admin/* تمرّ عبر Admin SDK من
+//  الخادم، الذي يتجاوز هذه القواعد. القواعد هنا تحمي الكتابات المباشرة
+//  من Web SDK (المتصفّح) فقط (Defense-in-depth).
+//
+//  ⛔ جسور Mshcat / OldApp / IslamHouse معطّلة. استيراد Internet Archive
+//  يمرّ عبر Admin SDK فقط (/api/admin/internet-archive) — لا من التطبيق.
+// ════════════════════════════════════════════════════════════════════
+
+service firebase.storage {
+  match /b/{bucket}/o {
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    // الصلاحية تعتمد حصراً على Custom Claim `role` الذي يضبطه الخادم في
+    // dashboardClaimsSync.js انطلاقاً من `dashboard_users/{uid}.role` في RTDB.
+    // أُزيل fallback البريد الصلب لتجنّب bypass دائم لو عُرف البريد لأيّ سبب
+    // (تسريب، حذف الحساب، انتحال هوية بعد إعادة الضبط). الشرط: لكلّ مالك في
+    // RTDB يجب أن يكون لديه `role: 'owner'` لينتشر في ID Token. إن كان حسابك
+    // جديداً، استدعِ `firebase/auth.getIdToken(true)` بعد الترقية لتحديث التوكن.
+    function hasOwnerOrSupervisor() {
+      return isSignedIn() && (
+        request.auth.token.role == 'owner' ||
+        request.auth.token.role == 'supervisor'
+      );
+    }
+
+    function isValidUpload() {
+      // قيد MIME صارم: فقط أنواع نعرضها فعلاً في التطبيق. كان
+      // `application/.*` يقبل application/x-msdownload (exe) وغيره من
+      // التهديدات؛ التضييق هنا يمنع رفع أيّ ملفّ تنفيذيّ أو غير معروف.
+      return request.resource.size < 200 * 1024 * 1024
+        && request.resource.contentType.matches(
+          'image/(jpeg|jpg|png|webp|gif)'
+          + '|video/(mp4|webm|x-matroska|quicktime)'
+          + '|audio/(mpeg|mp4|aac|ogg|wav|x-m4a|x-wav)'
+          + '|application/(pdf|epub\\+zip|zip)'
+        );
+    }
+
+    // محتوى لوحة التحكّم (الملفّات الفعلية + الـ thumbnails)
+    // يكتب فيه storageUpload.js → firebaseUploadContentFile + uploadContentThumbnail
+    match /dashboard/content/{fileId}/{allPaths=**} {
+      allow read: if true;
+      allow write: if hasOwnerOrSupervisor() && isValidUpload();
+    }
+
+    // الرفع العام المباشر إلى Nebras (smartUpload.js → target=nebras)
+    match /dashboard/uploads/{allPaths=**} {
+      allow read: if true;
+      allow write: if hasOwnerOrSupervisor() && isValidUpload();
+    }
+
+    // ملفات سكريبت Noor Library (المحرّك الآلي)
+    match /dashboard/noor-library/{bookId}/{allPaths=**} {
+      allow read: if true;
+      allow write: if hasOwnerOrSupervisor() && isValidUpload();
+    }
+
+    // ملفات محرّك Internet Archive (استيراد خادمي فقط)
+    match /dashboard/internet-archive/{fileId}/{allPaths=**} {
+      allow read: if true;
+      allow write: if hasOwnerOrSupervisor() && isValidUpload();
+    }
+
+    // thumbnails الأقسام (sections/main|sub|secondary/{id}/...)
+    match /sections/{level}/{sectionId}/{allPaths=**} {
+      allow read: if true;
+      allow write: if hasOwnerOrSupervisor()
+        && request.resource.size < 10 * 1024 * 1024
+        && request.resource.contentType.matches('image/.*');
+    }
+
+    // مرفقات دردشة الإدارة الجماعيّة — خاصّة تماماً (الدردشة مخفيّة عن
+    // التطبيق العامّ): القراءة والكتابة لمشرفي اللوحة حصراً. حدّ حجم كبير
+    // (3 غيغا) لدعم الملفّات الضخمة، وبدون قيد MIME لأنّ الرفع محصور
+    // بالإدارة والقراءة ليست عامّة.
+    match /dashboard/chat/{allPaths=**} {
+      allow read: if hasOwnerOrSupervisor();
+      allow create, update: if hasOwnerOrSupervisor()
+        && request.resource.size < 3 * 1024 * 1024 * 1024;
+      allow delete: if hasOwnerOrSupervisor();
+    }
+
+    // 📡 مجتمع نبراس (UGC) — ملفّات منشورات الناشرين: ugc/{uid}/{postId}/…
+    //   • القراءة عامّة (المحتوى منشور للجميع).
+    //   • الكتابة: صاحب المجلّد فقط، بحساب حقيقيّ (لا anonymous)،
+    //     بحدّ 300MB (مطابق لـ UgcService.maxFileSizeBytes — عدّل الاثنين
+    //     معاً)، وبأنواع MIME التي ينشرها التطبيق حصراً (صوت/فيديو/PDF/نصّ
+    //     المقال) — لا ملفّات تنفيذيّة أو مجهولة.
+    //   • الحذف: صاحب المجلّد (حذف منشوره) — واللوحة تحذف عبر Admin SDK
+    //     الذي يتجاوز القواعد أصلاً.
+    match /ugc/{userId}/{postId}/{fileName} {
+      allow read: if true;
+      allow create, update: if isSignedIn()
+        && request.auth.uid == userId
+        && request.auth.token.firebase.sign_in_provider != 'anonymous'
+        && request.resource.size < 300 * 1024 * 1024
+        && request.resource.contentType.matches(
+          'audio/.*|video/.*|application/pdf|text/plain.*|image/jpeg|image/png|image/webp'
+        );
+      allow delete: if isSignedIn() && request.auth.uid == userId;
+    }
+
+    // منع كل ما عدا ذلك
+    match /{path=**} {
+      allow read: if false;
+      allow write: if false;
+    }
+  }
+}

@@ -1,0 +1,17 @@
+# ─────────────────────────────────────────────────────────────────────────
+# نسخة المثال — انسخ هذا الملف إلى `key.properties` (بدون .example) في
+# المجلد `android/` ثمّ املأ القيم الحقيقيّة لمفتاح التوقيع الخاصّ بـ
+# الإنتاج. ملفّ key.properties مُهمَل عن git ولا يجب رفعه أبداً.
+#
+# لتوليد keystore جديد:
+#   keytool -genkey -v -keystore nebras-release.jks -keyalg RSA \
+#           -keysize 2048 -validity 10000 -alias nebras
+#
+# ثمّ ضع الملف في `android/nebras-release.jks` (مُهمَل أيضاً عن git)
+# واملأ القيم أدناه.
+# ─────────────────────────────────────────────────────────────────────────
+
+storePassword=YOUR_KEYSTORE_PASSWORD
+keyPassword=YOUR_KEY_PASSWORD
+keyAlias=nebras
+storeFile=nebras-release.jks

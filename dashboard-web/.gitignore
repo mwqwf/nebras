@@ -1,0 +1,8 @@
+node_modules/
+.vercel/
+.claude/
+/dashboard/
+**/_sections_dump.json
+**/_sim.txt
+Nebras_dashboard-main/dashboard/.env
+Nebras_dashboard-main/dashboard/.env.*

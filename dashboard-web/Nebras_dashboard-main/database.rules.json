@@ -1,0 +1,138 @@
+{
+  "rules": {
+    "dashboard_users": {
+      ".read":  "auth != null && root.child('dashboard_users').child(auth.uid).child('role').val() === 'owner'",
+      ".write": "auth != null && root.child('dashboard_users').child(auth.uid).child('role').val() === 'owner'",
+      "$uid": {
+        ".read":  "auth != null && (auth.uid === $uid || root.child('dashboard_users').child(auth.uid).child('role').val() === 'owner')",
+        ".write": "auth != null && root.child('dashboard_users').child(auth.uid).child('role').val() === 'owner'"
+      }
+    },
+
+    "sections_unified": {
+      ".read": "auth != null",
+
+      "main": {
+        ".read": true,
+        ".write": "auth != null && (root.child('dashboard_users').child(auth.uid).child('role').val() === 'owner' || root.child('dashboard_users').child(auth.uid).child('role').val() === 'supervisor')",
+        "$mainId": {
+          ".validate": "newData.hasChild('id') && newData.child('name').isString() && newData.child('name').val().length > 0"
+        }
+      },
+
+      "sub": {
+        ".read": true,
+        ".write": "auth != null && (root.child('dashboard_users').child(auth.uid).child('role').val() === 'owner' || root.child('dashboard_users').child(auth.uid).child('role').val() === 'supervisor')",
+        "$subId": {
+          ".validate": "newData.hasChild('id') && newData.hasChild('main_section') && newData.child('name').isString() && newData.child('name').val().length > 0"
+        }
+      },
+
+      "secondary": {
+        ".read": true,
+        ".write": "auth != null && (root.child('dashboard_users').child(auth.uid).child('role').val() === 'owner' || root.child('dashboard_users').child(auth.uid).child('role').val() === 'supervisor')",
+        "$secId": {
+          ".validate": "newData.hasChild('id') && newData.hasChild('sub_section') && newData.child('name').isString() && newData.child('name').val().length > 0"
+        }
+      }
+    },
+
+    "content_unified": {
+      ".read": "auth != null",
+
+      "files": {
+        ".read": true,
+        ".write": "auth != null && (root.child('dashboard_users').child(auth.uid).child('role').val() === 'owner' || root.child('dashboard_users').child(auth.uid).child('role').val() === 'supervisor')",
+        "$fileId": {
+          ".validate": "newData.hasChild('id') || newData.hasChild('fileId')"
+        }
+      },
+
+      "youtube": {
+        ".read": true,
+        ".write": "auth != null && (root.child('dashboard_users').child(auth.uid).child('role').val() === 'owner' || root.child('dashboard_users').child(auth.uid).child('role').val() === 'supervisor')",
+        "$videoId": {
+          ".validate": "newData.hasChild('id') && newData.child('video_url').isString()"
+        }
+      }
+    },
+
+    "dashboard_uploads": {
+      ".read":  "auth != null",
+      ".write": "auth != null && (root.child('dashboard_users').child(auth.uid).child('role').val() === 'owner' || root.child('dashboard_users').child(auth.uid).child('role').val() === 'supervisor')",
+      "$fileId": {
+        ".validate": "newData.hasChild('fileId') || newData.hasChild('id')"
+      }
+    },
+
+    "noor_library_jobs": {
+      ".read":  "auth != null && (root.child('dashboard_users').child(auth.uid).child('role').val() === 'owner' || root.child('dashboard_users').child(auth.uid).child('role').val() === 'supervisor')",
+      ".write": "auth != null && (root.child('dashboard_users').child(auth.uid).child('role').val() === 'owner' || root.child('dashboard_users').child(auth.uid).child('role').val() === 'supervisor')",
+      ".indexOn": ["startedAt"]
+    },
+
+    "noor_library_engine": {
+      ".read":  "auth != null && (root.child('dashboard_users').child(auth.uid).child('role').val() === 'owner' || root.child('dashboard_users').child(auth.uid).child('role').val() === 'supervisor')",
+      ".write": "auth != null && root.child('dashboard_users').child(auth.uid).child('role').val() === 'owner'",
+      "log": {
+        ".indexOn": ["ts"]
+      }
+    },
+
+    "noor_library_registry": {
+      ".read":  "auth != null && (root.child('dashboard_users').child(auth.uid).child('role').val() === 'owner' || root.child('dashboard_users').child(auth.uid).child('role').val() === 'supervisor')",
+      ".write": "auth != null && root.child('dashboard_users').child(auth.uid).child('role').val() === 'owner'"
+    },
+
+    "noor_library_failures": {
+      ".read":  "auth != null && (root.child('dashboard_users').child(auth.uid).child('role').val() === 'owner' || root.child('dashboard_users').child(auth.uid).child('role').val() === 'supervisor')",
+      ".write": "auth != null && root.child('dashboard_users').child(auth.uid).child('role').val() === 'owner'"
+    },
+
+    "hindawi_library_engine": {
+      ".read":  "auth != null && (root.child('dashboard_users').child(auth.uid).child('role').val() === 'owner' || root.child('dashboard_users').child(auth.uid).child('role').val() === 'supervisor')",
+      ".write": "auth != null && (root.child('dashboard_users').child(auth.uid).child('role').val() === 'owner' || root.child('dashboard_users').child(auth.uid).child('role').val() === 'supervisor')",
+      "log": {
+        ".indexOn": ["ts"]
+      }
+    },
+
+    "hindawi_library_registry": {
+      ".read":  "auth != null && (root.child('dashboard_users').child(auth.uid).child('role').val() === 'owner' || root.child('dashboard_users').child(auth.uid).child('role').val() === 'supervisor')",
+      ".write": "auth != null && (root.child('dashboard_users').child(auth.uid).child('role').val() === 'owner' || root.child('dashboard_users').child(auth.uid).child('role').val() === 'supervisor')"
+    },
+
+    "hindawi_library_failures": {
+      ".read":  "auth != null && (root.child('dashboard_users').child(auth.uid).child('role').val() === 'owner' || root.child('dashboard_users').child(auth.uid).child('role').val() === 'supervisor')",
+      ".write": "auth != null && (root.child('dashboard_users').child(auth.uid).child('role').val() === 'owner' || root.child('dashboard_users').child(auth.uid).child('role').val() === 'supervisor')"
+    },
+
+    "ia_library_engine": {
+      ".read":  "auth != null && (root.child('dashboard_users').child(auth.uid).child('role').val() === 'owner' || root.child('dashboard_users').child(auth.uid).child('role').val() === 'supervisor')",
+      ".write": "auth != null && (root.child('dashboard_users').child(auth.uid).child('role').val() === 'owner' || root.child('dashboard_users').child(auth.uid).child('role').val() === 'supervisor')",
+      "log": {
+        ".indexOn": ["ts"]
+      }
+    },
+
+    "ia_library_registry": {
+      ".read":  "auth != null && (root.child('dashboard_users').child(auth.uid).child('role').val() === 'owner' || root.child('dashboard_users').child(auth.uid).child('role').val() === 'supervisor')",
+      ".write": "auth != null && (root.child('dashboard_users').child(auth.uid).child('role').val() === 'owner' || root.child('dashboard_users').child(auth.uid).child('role').val() === 'supervisor')"
+    },
+
+    "ia_library_failures": {
+      ".read":  "auth != null && (root.child('dashboard_users').child(auth.uid).child('role').val() === 'owner' || root.child('dashboard_users').child(auth.uid).child('role').val() === 'supervisor')",
+      ".write": "auth != null && (root.child('dashboard_users').child(auth.uid).child('role').val() === 'owner' || root.child('dashboard_users').child(auth.uid).child('role').val() === 'supervisor')"
+    },
+
+    "dashboard_owner_codes": {
+      ".read": false,
+      ".write": false
+    },
+
+    "$other": {
+      ".read": false,
+      ".write": false
+    }
+  }
+}

@@ -1,0 +1,16 @@
+name: Internet Archive Auto-Tick
+
+on:
+  schedule:
+    # يعمل كل 5 دقائق
+    - cron: '*/5 * * * *'
+  workflow_dispatch: # للسماح بالتشغيل اليدوي إن رغب المستخدم
+
+jobs:
+  hit-cron:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Hit Vercel Cron Endpoint
+        run: |
+          # نرسل طلب GET لنقطة الـ API لضمان عمل المحرّك وتجاوز قيود Vercel Hobby
+          curl -sSf -m 90 "https://nebras-dashboard-main.vercel.app/api/cron/internet-archive-tick" || true

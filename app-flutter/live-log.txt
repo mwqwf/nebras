@@ -1,0 +1,7 @@
+﻿adb : logcat: Unknown option '(null)'.
+At line:1 char:81
++ ... $env:PATH"; adb -s R5CY14B5DRV logcat -s flutter:V --line-count=200 2 ...
++                 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (logcat: Unknown option '(null)'.:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 

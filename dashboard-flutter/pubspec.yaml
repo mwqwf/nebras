@@ -1,0 +1,84 @@
+name: nebras_dashboard
+description: "لوحة تحكّم نبراس — تطبيق Flutter (تحويل لوحة الويب الإدارية)."
+publish_to: 'none'
+
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.11.5
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  cupertino_icons: ^1.0.8
+
+  # 🔥 Firebase — نفس مشروع نبراس (nebras-9118c)، قاعدة Firestore المسمّاة "default".
+  firebase_core: ^4.7.0
+  firebase_auth: ^6.4.0
+  cloud_firestore: ^6.1.2
+  firebase_storage: ^13.3.0
+
+  # 🔐 تسجيل دخول Google (نفس serverClientId المستعمل في تطبيق نبراس).
+  google_sign_in: ^6.2.1
+
+  # 🧠 إدارة الحالة
+  provider: ^6.1.2
+
+  # 🌐 استدعاء نقاط الـ API الخادمية للوحة (Bearer ID token).
+  http: ^1.2.0
+
+  # 🗂️ اختيار الملفّات للرفع (PDF/صوت/فيديو/صور).
+  file_picker: ^8.1.0
+
+  # 📊 الرسوم البيانية في الإحصاءات (بديل chart.js).
+  fl_chart: ^0.69.0
+
+  # 🖼️ صور مصغّرة مع كاش.
+  cached_network_image: ^3.4.1
+
+  # 🔗 فتح روابط الملفّات خارجياً.
+  url_launcher: ^6.3.1
+
+  # 💾 حفظ تفضيلات محلية (وضع العرض admin/moderator).
+  shared_preferences: ^2.5.4
+
+  # 🌍 تنسيق التواريخ/الأرقام.
+  intl: ^0.20.2
+
+  # 🎙️ تسجيل الملاحظات الصوتيّة في دردشة الإدارة.
+  record: ^6.1.2
+
+  # 🔊 تشغيل الصوتيّات داخل فقاعات الدردشة.
+  audioplayers: ^6.1.0
+
+  # 🎬 تشغيل الفيديو داخل الدردشة (صفحة مشغّل كاملة).
+  video_player: ^2.9.2
+
+  # 📁 مسار مؤقّت لملفّ التسجيل الصوتي قبل رفعه.
+  path_provider: ^2.1.4
+
+  # 🗄️ Realtime Database — ترقية/إنزال أدوار dashboard_users مباشرة
+  # (قواعد RTDB تسمح بذلك للمالك، وauth/check يزامن الـ claims تلقائيّاً).
+  firebase_database: ^12.0.0
+
+  # 📤 «المشاركة إلى نبراس» تُنفَّذ أصليّاً في MainActivity.kt + MethodChannel
+  # (حزمة receive_sharing_intent غير متوافقة مع Gradle الحديث).
+
+  # 🔔 إشعارات FCM (topics + token) لدردشة الإدارة والمحتوى الجديد.
+  firebase_messaging: ^16.0.0
+
+  # 🔕 عرض الإشعارات محليّاً — رسائل الخادم data-only لا يعرضها النظام تلقائيّاً.
+  flutter_local_notifications: ^19.0.0
+
+  # 🔤 الخط العربي IBM Plex Sans Arabic لكلا السمتين.
+  google_fonts: ^6.3.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+
+  flutter_lints: ^6.0.0
+
+flutter:
+  uses-material-design: true

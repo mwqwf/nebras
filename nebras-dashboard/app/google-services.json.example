@@ -1,0 +1,8 @@
+{
+  "_comment": "ضع هنا ملف google-services.json من مشروع Firebase الخاص بك — الحزمة: com.example.nebras_mobile_app",
+  "project_info": {
+    "project_number": "YOUR_PROJECT_NUMBER",
+    "project_id": "YOUR_PROJECT_ID",
+    "storage_bucket": "YOUR_PROJECT.firebasestorage.app"
+  }
+}

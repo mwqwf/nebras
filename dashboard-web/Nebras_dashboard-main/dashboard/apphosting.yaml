@@ -1,0 +1,42 @@
+# Firebase App Hosting configuration for the Nebras dashboard (SvelteKit).
+# Docs: https://firebase.google.com/docs/app-hosting/configure
+
+# Explicitly override build/run commands so App Hosting does not try to
+# auto-detect a framework adapter (only Next.js & Angular are preconfigured).
+scripts:
+  buildCommand: npm run build
+  runCommand: node build
+
+runConfig:
+  minInstances: 0
+  maxInstances: 2
+  concurrency: 80
+  cpu: 1
+  memoryMiB: 1024
+
+env:
+  - variable: OWNER_CODE_SECRET
+    secret: OWNER_CODE_SECRET
+    availability:
+      - RUNTIME
+  - variable: SMTP_PASS
+    secret: SMTP_PASS
+    availability:
+      - RUNTIME
+  - variable: NEBRAS_SERVICE_ACCOUNT_JSON
+    secret: NEBRAS_SERVICE_ACCOUNT_JSON
+    availability:
+      - RUNTIME
+
+  # ── خدمة crawl4ai (Cloud Run في نفس المشروع) ────────────────────
+  # رابط خدمة crawl4ai الداخليّة + السرّ المشترك. اللوحة تستدعيها
+  # server-side فقط (محرّك مكتبة نور: زحف/جلب/تنزيل عبر متصفّح حقيقي).
+  # عيّن CRAWL4AI_SERVICE_URL إلى عنوان خدمة Cloud Run بعد نشرها.
+  - variable: CRAWL4AI_SERVICE_URL
+    value: ""
+    availability:
+      - RUNTIME
+  - variable: CRAWL4AI_SERVICE_SECRET
+    secret: CRAWL4AI_SERVICE_SECRET
+    availability:
+      - RUNTIME

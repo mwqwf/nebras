@@ -1,0 +1,51 @@
+{
+	"name": "dashboard",
+	"private": true,
+	"version": "0.0.1",
+	"type": "module",
+	"engines": {
+		"node": ">=20"
+	},
+	"scripts": {
+		"dev": "vite dev",
+		"build": "vite build",
+		"preview": "vite preview",
+		"start": "node build",
+		"prepare": "svelte-kit sync || echo ''",
+		"deploy:rules": "node scripts/deploy-firestore-rules.mjs",
+		"deploy:db-rules": "node scripts/deploy-database-rules.mjs",
+		"deploy:storage-rules": "node scripts/deploy-storage-rules.mjs",
+		"check:rules": "node check-rules.mjs",
+		"resolve:sa-path": "node scripts/resolve-sa-path.mjs"
+	},
+	"devDependencies": {
+		"@sveltejs/adapter-auto": "^7.0.0",
+		"@sveltejs/adapter-node": "^5.5.4",
+		"@sveltejs/adapter-vercel": "^6.3.3",
+		"@sveltejs/kit": "^2.50.2",
+		"@sveltejs/vite-plugin-svelte": "^6.2.4",
+		"@tailwindcss/vite": "^4.1.18",
+		"bufferutil": "^4.1.0",
+		"encoding": "^0.1.13",
+		"source-map-support": "^0.5.21",
+		"supports-color": "^10.2.2",
+		"svelte": "^5.49.2",
+		"tailwindcss": "^4.1.18",
+		"typescript": "^5.9.3",
+		"utf-8-validate": "^6.0.6",
+		"vite": "^7.3.1"
+	},
+	"dependencies": {
+		"browser-image-compression": "^2.0.2",
+		"chart.js": "^4.5.1",
+		"firebase": "^12.12.0",
+		"firebase-admin": "^13.8.0",
+		"nodemailer": "^8.0.5",
+		"pdfjs-dist": "^5.7.284"
+	},
+	"optionalDependencies": {
+		"puppeteer": "^23.11.1",
+		"puppeteer-extra": "^3.3.6",
+		"puppeteer-extra-plugin-stealth": "^2.11.2"
+	}
+}

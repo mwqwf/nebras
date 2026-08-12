@@ -1,0 +1,158 @@
+name: nebras_mobile_app
+description: "Nebras — a general-knowledge archive: read books, listen to audio, and watch videos in Arabic, English and French."
+publish_to: 'none'
+
+version: 1.0.4+8
+
+environment:
+  # نطاق واسع بدلاً من ^3.10.1 الحصري، حتى لا يُفشل `flutter pub get`
+  # على المطوّرين/CI الذين يستعملون إصدارات Dart حديثة.
+  # ⚠️ الحدّ الأدنى = 3.7.0 لأنّ المشروع يستعمل **wildcard patterns** (`_`)
+  # في معاملات closures المتعدّدة (مثل `(_, _) => ...`). هذه ميزة لغويّة
+  # أُدخلت في Dart 3.7 — وضعها أقلّ يجعل الـ analyzer يرى `_` كمتغيّر
+  # عاديّ ويُفشل البناء بـ "duplicate definition".
+  sdk: ">=3.7.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # iOS style icons
+  cupertino_icons: ^1.0.8
+
+  # 🌍 Localization & RTL
+  flutter_localizations:
+    sdk: flutter
+  easy_localization: ^3.0.7
+  intl: ^0.20.2
+  restart_app: ^1.3.2
+ 
+  # 🎨 Typography
+  google_fonts: ^6.2.1
+
+  # 🧠 State Management
+  provider: ^6.1.2
+  path_provider: ^2.1.5
+  dio: ^5.9.1
+  # 📐 Responsive UI
+  flutter_screenutil: ^5.9.3
+  smooth_page_indicator: ^1.2.1
+
+  # 🧭 Navigation (we’ll need it later)
+  go_router: ^14.2.7
+
+  # 📄 PDF Reader
+  syncfusion_flutter_pdfviewer: ^32.1.20
+
+  # 🎧 Audio Player
+  just_audio: ^0.10.5
+
+  # 🎧 Background playback + lock-screen/notification media controls
+  # الرفيق الرسمي لـ just_audio: يربط المشغّل بـ MediaSession على Android
+  # و MPNowPlayingInfoCenter على iOS، ويُفعِّل الإشعار الدائم مع أزرار
+  # التحكّم (تشغيل/إيقاف/التالي/السابق).
+  just_audio_background: ^0.0.1-beta.17
+
+  # 🎚️ Audio Focus / Interruption Management
+  # إدارة صارمة للتركيز الصوتي على AVAudioSession (iOS) و AudioManager
+  # (Android). تضمن إيقاف المقطع السابق فور تشغيل الجديد، والتعامل مع
+  # المكالمات والتنبيهات بسلوك المشغّلات الاحترافية.
+  audio_session: ^0.2.3
+
+  # 🪟 Picture-in-Picture (Android, OS-level)
+  # يتكامل مع Activity ليُفعِّل وضع PiP الأصلي. على iOS يتكفّل
+  # video_player بذلك تلقائيّاً منذ iOS 14.
+  floating: ^6.0.0
+
+  # 🎥 Video Streaming
+  video_player: ^2.10.1
+
+  # 🧰 Utilities
+  equatable: ^2.0.5
+  # رقم الإصدار الفعليّ يُقرأ وقت التشغيل (شاشة "حول") بدل قيمة ثابتة.
+  package_info_plus: ^8.0.0
+
+  lottie: ^3.1.2
+  concentric_transition: ^1.0.3
+  #  firebase
+  firebase_core: ^4.7.0
+  firebase_auth: ^6.4.0
+  cloud_firestore: ^6.1.2
+  firebase_messaging: ^16.1.1
+  flutter_local_notifications: ^18.0.1
+  cached_network_image: ^3.4.1
+  shared_preferences: ^2.5.4
+  get_it: ^9.2.0
+  # 📦 Local Storage
+  hive: ^2.2.3
+  hive_flutter: ^1.1.0
+  # splash screen 
+  flutter_native_splash: ^2.4.7
+  youtube_player_flutter: ^9.1.3
+  firebase_storage: ^13.3.0
+
+  # 🔐 Authentication — Google Sign-In
+  # نستخدم الإصدار 6.x المستقر المتكامل مع google-services.json
+  # المُعدّ مسبقاً لصالح Firebase. يكفي هذا لاختيار حساب Google من الجهاز
+  # وتعريف المستخدم محلّياً، ويمكن لاحقاً توسيعه بـ firebase_auth دون أثر
+  # على واجهة الدخول.
+  google_sign_in: ^6.2.1
+
+  # 🔗 Global Linkify — كشف الروابط داخل نصوص الوصف وفتحها بالمتصفح
+  # الخارجيّ للجهاز. تُستعمل عبر الويدجت المشترك
+  # `core/widgets/auto_link_text.dart` في كلّ شاشات الوصف (Firebase)
+  # حتى تبقى تجربة المستخدم موحَّدة.
+  flutter_linkify: ^6.0.0
+  url_launcher: ^6.3.1
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+
+  flutter_lints: ^6.0.0
+  build_runner: ^2.4.13
+  hive_generator: ^2.0.1
+  flutter_launcher_icons: ^0.14.3
+
+flutter:
+  uses-material-design: true
+
+  assets:
+    - assets/translations/
+    - assets/images/
+    - assets/videos/
+    - assets/lottie/
+    # ملف .env اختياريّ: نقرأه عبر `dotenv.load(fileName: '.env', mergeWith:
+    # Platform.environment, isOptional: true)` في طبقة الـ bootstrap. أزلناه
+    # من الـ assets لأنّه:
+    #   1) قد لا يكون موجوداً في CI أو على جهاز جديد، فيُفشل البناء.
+    #   2) يصبح قابلاً للاستخراج من الـ APK باستخدام `unzip` (لا تضع فيه أيّ
+    #      سرّ على الإطلاق).
+    # القيم الحساسة الحقيقيّة يجب أن تُمرّر عبر `--dart-define` أو Firebase
+    # Remote Config، لا عبر assets.
+
+flutter_launcher_icons:
+  android: "ic_launcher"
+  ios: true
+  # ⚠️ مصدر التوليد = ماستر 1024×1024 خارج الـ assets المحزومة.
+  # `assets/images/app_icon.png` المضمَّن في الـ AAB هو نسخة مضغوطة 384×384
+  # (74KB) ـ يقرأها التطبيق فقط كصورة UI داخليّة. لو وُجِّه
+  # `flutter_launcher_icons` إلى تلك النسخة فسيُولِّد mipmaps منخفضة الدقّة
+  # تظهر مكبَّرة على xxxhdpi. الماستر في `tools/app_icon_master.png` غير
+  # محزوم لأنّه ليس ضمن `flutter.assets`.
+  image_path: "tools/app_icon_master.png"
+  remove_alpha_ios: true
+  min_sdk_android: 23
+  adaptive_icon_background: "#0B2545"
+  # ⚠️ ملاحظة: المنطقة الآمنة (Adaptive Icons safe zone) مضبوطة يدوياً في
+  # `android/app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml` عبر
+  # `<inset android:inset="25%" />`. إن أعدت تشغيل
+  # `dart run flutter_launcher_icons` فسيُكتب فوق هذا الـ inset؛ في هذه
+  # الحالة استبدله من جديد، أو استخدم نسخة مُسبقة المعالجة من الصورة
+  # مع padding شفّاف 30% مباشرة كـ `adaptive_icon_foreground`.
+  adaptive_icon_foreground: "tools/app_icon_master.png"
+  web:
+    generate: false
+  windows:
+    generate: false
+  macos:
+    generate: false

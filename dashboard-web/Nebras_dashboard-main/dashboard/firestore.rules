@@ -1,0 +1,485 @@
+rules_version = '2';
+
+// ════════════════════════════════════════════════════════════════════
+//  Cloud Firestore Rules — Nebras (Production-Strict)
+//
+//  المبدأ:
+//    • قراءة عامّة لمحتوى التطبيق (sections + uploads + content_unified).
+//    • كتابة مقيَّدة لمشرفي لوحة التحكّم فقط، عبر Custom Claim `role`
+//      الذي يضبطه الخادم بعد قراءة `dashboard_users/{uid}` في RTDB
+//      (مسارات `/api/auth/*` و`/api/admin/supervisors/*`).
+//    • أيّ مسار آخر مرفوض افتراضياً (deny-by-default).
+//
+//  ملاحظة للعميل: بعد تسجيل الدخول وحصول الحساب على صلاحيات،
+//  يجب استدعاء `firebase/auth.getIdToken(true)` لتحديث التوكن بالـ
+//  claims الجديدة قبل أيّ كتابة (انظر src/lib/api/auth.js).
+//
+//  التعديلات السيرفريّة (Admin SDK) تتجاوز هذه القواعد طبيعيّاً،
+//  وهي خطّ الدفاع الإضافي للكتابات المباشرة من المتصفّح.
+// ════════════════════════════════════════════════════════════════════
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function hasDashboardWrite() {
+      return isSignedIn() && (
+        request.auth.token.role == 'owner' ||
+        request.auth.token.role == 'supervisor'
+      );
+    }
+
+    // المالك وحده (وليس المشرفين العاديّين) — يُستخدم لمراجعة بلاغات
+    // المحتوى المخالف وحذفه من واجهة الإشراف الخاصّة بالمالك.
+    function hasOwnerRole() {
+      return isSignedIn() && request.auth.token.role == 'owner';
+    }
+
+    // تحقّق إنشاء بلاغ من التطبيق — يُسمح لأيّ مستخدم (موقَّع أو ضيف)
+    // بالإبلاغ، شرط وجود الحقول الأساسيّة وأن تكون الحالة 'pending'.
+    //
+    // قيود مكافحة الإساءة (anti-abuse):
+    //   • contentId غير فارغ وطوله ≤ 200 (يمنع كتابة قيم ضخمة).
+    //   • reasonCode من قائمة معروفة (يمنع spam بفئات وهميّة).
+    //   • note ≤ 2000 حرف (يمنع كتابة محتوى ضخم بحجّة "ملاحظة").
+    //   • الكتابة لا تتعدّى 20 حقلاً (يمنع تضخّم المستند).
+    //   • الحالة الابتدائيّة 'pending' فقط (لا يستطيع المُبلِّغ ضبط
+    //     status='dismissed' لتلويث الإحصاءات).
+    //   • إن كان المُبلِّغ موقَّعاً، يجب أن يطابق reporterUid هويّته
+    //     (يمنع انتحال هويّة الآخرين).
+    function isValidContentReport() {
+      let validReasons = ['copyright', 'sexual', 'child_safety',
+                          'violence', 'terrorism', 'other'];
+      let d = request.resource.data;
+      return d.keys().hasAll(['contentId', 'reasonCode', 'status', 'createdAt'])
+        && d.keys().size() <= 20
+        && d.contentId is string
+        && d.contentId.size() > 0
+        && d.contentId.size() <= 200
+        && d.reasonCode is string
+        && d.reasonCode in validReasons
+        && d.status == 'pending'
+        && (!('note' in d) || (d.note is string && d.note.size() <= 2000))
+        && (
+          // ضيف: يجب أن يكون reporterUid فارغاً أو غير موجود.
+          request.auth == null
+          ? (!('reporterUid' in d) || d.reporterUid == '')
+          // موقَّع: يجب أن يطابق reporterUid هويّته الحقيقيّة.
+          : (!('reporterUid' in d) || d.reporterUid == request.auth.uid)
+        );
+    }
+
+    // تحقّق إنشاء علامة الإخفاء العالميّ — يكتبها التطبيق فور بلاغ
+    // حقوق نشر. doc ID = contentId (idempotent: لا تكاثر للعنصر نفسه).
+    function isValidTakedownPending() {
+      let validReasons = ['copyright', 'sexual', 'child_safety',
+                          'violence', 'terrorism', 'other'];
+      let d = request.resource.data;
+      return d.keys().hasAll(['contentId', 'reasonCode', 'createdAt'])
+        && d.keys().size() <= 10
+        && d.contentId is string
+        && d.contentId.size() > 0
+        && d.contentId.size() <= 200
+        && d.reasonCode is string
+        && d.reasonCode in validReasons
+        && (!('reporterUid' in d) || d.reporterUid is string);
+    }
+
+    // تحديث عدّادات المشاهدة من التطبيق — حقول محدودة فقط، بدون UID.
+    function isEngagementCounterUpdate() {
+      return resource != null
+        && request.resource.data.diff(resource.data).affectedKeys()
+            .hasOnly(['view_count', 'play_count', 'complete_count', 'last_played_at']);
+    }
+
+    // ─── Sections (sections_unified/main|sub|secondary) ─────────
+    // مستند واحد لكلّ مستوى يحوي خريطة id→record. لا نقيّد بنية الخريطة
+    // داخل Rules لأنّ ذلك يستوجب تكرار عشرات المفاتيح؛ التحقّق منها يجري
+    // في كود الواجهة قبل الإرسال (moderator.js).
+    match /sections_unified/{level} {
+      allow read: if true;
+      allow write: if hasDashboardWrite()
+        && level in ['main', 'sub', 'secondary'];
+    }
+
+    // ─── ملفّات الرفع (مرايا متماثلة) ────────────────────────────
+    // كلّ مستند يجب أن يحمل id/fileId — مطابق لقواعد RTDB القديمة.
+    function validFileDoc() {
+      // شبكة أمان على مستوى القاعدة ضدّ تضخّم الحمولة (سبب انهيار سابق):
+      // نرفض وصفاً يتجاوز 20000 حرف حتى لو نسي مسار كتابة مستقبليّ استدعاء
+      // القصّ التطبيقيّ (clampContentTextFields). 20000 هامش آمن فوق حدّ
+      // التطبيق (8000) وتحت حدّ مستند Firestore (~1MB).
+      return request.resource.data.keys().hasAny(['id', 'fileId'])
+        && (
+          !('description' in request.resource.data)
+          || request.resource.data.description == null
+          || (
+            request.resource.data.description is string
+            && request.resource.data.description.size() < 20000
+          )
+        );
+    }
+
+    match /dashboard_uploads/{docId} {
+      allow read: if true;
+      allow create, update: if hasDashboardWrite() && validFileDoc();
+      allow delete: if hasDashboardWrite();
+    }
+
+    match /content_unified_files/{docId} {
+      allow read: if true;
+      allow create: if hasDashboardWrite() && validFileDoc();
+      allow update: if hasDashboardWrite() && validFileDoc();
+      allow update: if isEngagementCounterUpdate();
+      allow delete: if hasDashboardWrite();
+    }
+
+    // ─── سجلّات YouTube ─────────────────────────────────────────
+    // يجب أن يحمل المستند id و video_url نصّيّاً (مطابق لـ RTDB).
+    function validYoutubeDoc() {
+      return request.resource.data.keys().hasAll(['id', 'video_url'])
+        && request.resource.data.video_url is string
+        && request.resource.data.video_url.size() > 0;
+    }
+
+    match /content_unified_youtube/{docId} {
+      allow read: if true;
+      allow create: if hasDashboardWrite() && validYoutubeDoc();
+      allow update: if hasDashboardWrite() && validYoutubeDoc();
+      allow update: if isEngagementCounterUpdate();
+      allow delete: if hasDashboardWrite();
+    }
+
+    // تجميع أسبوعي للشعبية — يكتبه Admin SDK فقط (POST /api/admin/aggregates/popularity).
+    match /aggregates_popular/{docId} {
+      allow read: if true;
+      allow write: if false;
+    }
+
+    // ─── بلاغات المحتوى المخالف (من التطبيق) ─────────────────────
+    // الإنشاء متاح لأيّ مستخدم (موقَّع أو ضيف) للإبلاغ عن مخالفة.
+    // القراءة والتحديث للمالك وحده عبر واجهة الإشراف الخاصّة به.
+    // الحذف: للمالك، **أو** لصاحب البلاغ نفسه (reporterUid == uid) —
+    // هذا الأخير يلبّي سياسة حذف بيانات Google Play: عند حذف الحساب
+    // يحذف التطبيق بلاغات المستخدم بنفسه قبل إزالة الهويّة.
+    match /content_reports/{reportId} {
+      allow create: if isValidContentReport();
+      allow read, update: if hasOwnerRole();
+      allow delete: if hasOwnerRole()
+        || (isSignedIn() && resource.data.reporterUid == request.auth.uid);
+    }
+
+    // ─── الإخفاء العالميّ المؤقّت للمحتوى عند بلاغ حقوق نشر ──────
+    // doc id = contentId. التطبيق يكتبها فور بلاغ copyright فيختفي العنصر
+    // عن جميع المستخدمين فوراً (يقرأها كلّ مستخدم via snapshot). المالك
+    // يحذفها عند الـ dismiss أو delete من واجهة الإشراف.
+    //   • create: أيّ مستخدم/ضيف، شرط الـ validation.
+    //   • read: عامّ (يقرأها التطبيق في كلّ جلسة).
+    //   • update: المالك فقط (لإضافة ملاحظات إن لزم).
+    //   • delete: المالك فقط.
+    match /content_takedown_pending/{contentId} {
+      allow read: if true;
+      allow create: if isValidTakedownPending();
+      allow update, delete: if hasOwnerRole();
+    }
+
+    // ─── اقتراحات التصحيح من التطبيق العامّ ──────────────────────
+    // أيّ مستخدم (موقَّع أو ضيف) يقترح تصحيحاً على عنصر محتوى؛ كرون
+    // suggestions-bridge يحوّلها رسائل في دردشة الإدارة. قيود مضادّة
+    // للإساءة مطابقة لروح content_reports.
+    match /content_suggestions/{sugId} {
+      allow create: if request.resource.data.keys()
+          .hasOnly(['contentId', 'contentType', 'note', 'status',
+                    'createdAt', 'reporterUid'])
+        && request.resource.data.contentId is string
+        && request.resource.data.contentId.size() > 0
+        && request.resource.data.contentId.size() <= 200
+        && request.resource.data.note is string
+        && request.resource.data.note.size() > 0
+        && request.resource.data.note.size() <= 1000
+        && request.resource.data.status == 'pending'
+        && (
+          request.auth == null
+          ? !('reporterUid' in request.resource.data)
+          : (!('reporterUid' in request.resource.data)
+             || request.resource.data.reporterUid == request.auth.uid)
+        );
+      allow read: if hasDashboardWrite();
+      allow update, delete: if hasOwnerRole();
+    }
+
+    // ─── عدّادات مساهمة المشرفين (لوحة الشرف 🏆) ─────────────────
+    // كلّ مشرف يزيد عدّاداته هو فقط؛ القراءة لكلّ مشرفي اللوحة.
+    match /admin_stats/{statUid} {
+      allow read: if hasDashboardWrite();
+      allow create, update: if hasDashboardWrite()
+        && request.auth.uid == statUid;
+      allow delete: if hasOwnerRole();
+    }
+
+    // مشرف مجموعة الدردشة ⭐ — دور داخل الدردشة فقط (لا يمسّ التطبيق):
+    // يُعيَّن من المالك بحقل chatRole في وثيقة العضو.
+    function isChatModerator() {
+      return isSignedIn()
+        && get(/databases/$(database)/documents/admin_chat_members/$(request.auth.uid))
+            .data.chatRole == 'moderator';
+    }
+
+    // ─── دردشة الإدارة الجماعيّة (خاصّة باللوحة) ─────────────────
+    // مخفيّة تماماً عن تطبيق نبراس العامّ: القراءة والكتابة لمشرفي
+    // اللوحة (owner/supervisor) حصراً — أيّ مستخدم عاديّ يُرفض هنا.
+    //
+    // admin_chat_messages:
+    //   • create: المرسِل هو المستخدم الموقَّع نفسه (لا انتحال).
+    //   • update بثلاثة مسارات فقط:
+    //       1) "حذف عندي": تعديل حقل hiddenFor وحده (أيّ مشرف).
+    //       2) تفاعلات الإيموجي: تعديل خريطة reactions وحدها (أيّ مشرف).
+    //       3) "حذف عند الجميع": المرسِل نفسه أو المالك — يضبط
+    //          deleted=true ويمسح النصّ والمرفق، ولا يلمس غير ذلك.
+    //   • delete نهائي للوثيقة: المالك فقط.
+    match /admin_chat_messages/{msgId} {
+      allow read: if hasDashboardWrite();
+      allow create: if hasDashboardWrite()
+        && request.resource.data.senderId == request.auth.uid;
+      allow update: if hasDashboardWrite() && (
+        request.resource.data.diff(resource.data).affectedKeys()
+          .hasOnly(['hiddenFor'])
+        || request.resource.data.diff(resource.data).affectedKeys()
+          .hasOnly(['reactions'])
+        || (
+          (resource.data.senderId == request.auth.uid
+            || hasOwnerRole()
+            || isChatModerator())
+          && request.resource.data.deleted == true
+          && request.resource.data.diff(resource.data).affectedKeys()
+            .hasOnly(['deleted', 'deletedBy', 'deletedAt', 'text', 'att'])
+        )
+      );
+      allow delete: if hasOwnerRole();
+    }
+
+    // admin_chat_meta: هويّة المجموعة (اسم/صورة/قفل/رسالة مثبَّتة).
+    // يقرؤها كلّ مشرفي اللوحة؛ يكتبها المالك وحده — ويُسمح لمشرف
+    // المجموعة ⭐ بالتثبيت/إلغائه فقط (حقل pinned دون سواه).
+    match /admin_chat_meta/{docId} {
+      allow read: if hasDashboardWrite();
+      allow create: if hasOwnerRole()
+        || (isChatModerator()
+            && request.resource.data.keys().hasOnly(['pinned', 'updatedAt']));
+      allow update: if hasOwnerRole()
+        || (isChatModerator()
+            && request.resource.data.diff(resource.data).affectedKeys()
+              .hasOnly(['pinned', 'updatedAt']));
+      allow delete: if hasOwnerRole();
+    }
+
+    // admin_chat_members: عضويّة تلقائيّة — كلّ مشرف يكتب وثيقته فقط،
+    // والمالك يكتب أيّ وثيقة (تعيين مشرفي المجموعة chatRole، تصحيح role)؛
+    // الإزالة للمالك (إخراج مشرف) أو للعضو نفسه.
+    match /admin_chat_members/{memberUid} {
+      allow read: if hasDashboardWrite();
+      allow create, update: if hasDashboardWrite()
+        && (request.auth.uid == memberUid || hasOwnerRole());
+      allow delete: if hasOwnerRole()
+        || (isSignedIn() && request.auth.uid == memberUid);
+    }
+
+    // ═════════════════ مجتمع نبراس (UGC) 📡 ═════════════════════
+    // نشر مفتوح للمستخدمين عبر «قنوات» (قرار المالك 2026-07-14):
+    //   • النشر فوريّ بلا موافقة مسبقة؛ الرقابة لاحقة عبر بلاغات
+    //     content_reports وحذف/تعليق من اللوحة.
+    //   • حساب Google حقيقيّ إلزاميّ (لا ضيوف مجهولين) — الناشر مُعرَّف.
+    //   • كلّ شيء منفصل تماماً عن المجموعات الرسميّة (content_unified_*).
+
+    // حساب حقيقيّ (ليس anonymous) — شرط كلّ كتابة مجتمع.
+    function isRealUser() {
+      return isSignedIn()
+        && request.auth.token.firebase.sign_in_provider != 'anonymous';
+    }
+
+    // شكل وثيقة القناة كما يكتبها التطبيق (upsertMyChannel).
+    // `sections` = أقسام يملكها الناشر ويسمّيها بنفسه داخل قناته (قرار
+    // المالك: لا علاقة لمحتوى المستخدمين بأقسام نبراس الرسميّة إطلاقاً).
+    function isValidUgcChannel() {
+      let d = request.resource.data;
+      return d.keys().hasOnly(['ownerUid', 'name', 'bio', 'photoUrl',
+            'sections', 'createdAt', 'updatedAt', 'termsAcceptedAt',
+            'status', 'moderatedAt', 'moderatedBy'])
+        && d.ownerUid == request.auth.uid
+        && d.name is string
+        && d.name.size() >= 3
+        && d.name.size() <= 50
+        && (!('bio' in d) || (d.bio is string && d.bio.size() <= 200))
+        && (!('sections' in d)
+            || (d.sections is list && d.sections.size() <= 50));
+    }
+
+    // ─── قنوات الناشرين: ugc_channels/{uid} — قناة واحدة لكلّ حساب ──
+    //   • read عامّ: اسم الناشر يظهر على محتواه لكلّ المستخدمين.
+    //   • create/update: صاحب القناة فقط، ولا يستطيع لمس status
+    //     (التعليق suspended حصريّ للمالك عبر اللوحة فلا يفكّه الناشر).
+    //   • اللوحة (owner/supervisor) تعدّل أيّ قناة (تعليق/تصحيح).
+    match /ugc_channels/{channelUid} {
+      allow read: if true;
+      allow create: if isRealUser()
+        && request.auth.uid == channelUid
+        && isValidUgcChannel()
+        && request.resource.data.status == 'active';
+      allow update: if (hasDashboardWrite()
+            && request.resource.data.diff(resource.data).affectedKeys()
+                .hasOnly(['status', 'moderatedAt', 'moderatedBy', 'updatedAt']))
+        || (isRealUser()
+            && request.auth.uid == channelUid
+            && isValidUgcChannel()
+            && !request.resource.data.diff(resource.data).affectedKeys()
+                .hasAny(['status', 'createdAt', 'moderatedAt', 'moderatedBy']));
+      allow delete: if hasOwnerRole()
+        || (isRealUser() && request.auth.uid == channelUid);
+    }
+
+    // شكل وثيقة المنشور كما يكتبها التطبيق (UgcService.publish) حرفيّاً.
+    // أهمّ القيود:
+    //   • source_url من Firebase Storage فقط (لا روابط خارجيّة إطلاقاً —
+    //     يسدّ ثغرة تمرير روابط لمنصّات محظورة أو ملفّات خبيثة).
+    //   • storage_path داخل مجلّد الناشر نفسه ugc/{uid}/…
+    //   • الحالة الابتدائيّة 'published' وعدّاد التعليقات صفر.
+    function isValidUgcContent() {
+      let d = request.resource.data;
+      return d.keys().hasOnly(['id', 'title', 'description', 'content_type',
+            'source_url', 'fileSize', 'thumbnail', 'created_by',
+            'author', 'source_name', 'created_at', 'updated_at', 'is_ugc',
+            'channelId', 'channelName', 'channelPhotoUrl',
+            'channel_section_id', 'channel_section_name',
+            'storage_path', 'commentsCount', 'reactionsCount', 'status',
+            'channelStatus'])
+        && d.title is string
+        && d.title.size() >= 3
+        && d.title.size() <= 120
+        && (!('description' in d)
+            || (d.description is string && d.description.size() <= 20000))
+        && d.content_type in ['audio', 'video', 'document', 'article']
+        && d.source_url is string
+        && d.source_url.matches('https://firebasestorage[.]googleapis[.]com/.*')
+        && d.thumbnail is string
+        && (d.thumbnail == ''
+            || d.thumbnail.matches('https://firebasestorage[.]googleapis[.]com/.*'))
+        && d.channelId == request.auth.uid
+        && d.storage_path is string
+        && d.storage_path.matches('ugc/' + request.auth.uid + '/.*')
+        && d.is_ugc == true
+        && d.status == 'published'
+        && d.commentsCount == 0
+        && d.reactionsCount == 0;
+    }
+
+    // ─── منشورات المجتمع: ugc_contents/{id} ──────────────────────
+    //   • read عامّ (يُرشَّح عرضاً في التطبيق: بلاغات/حجب/امتثال).
+    //   • create: ناشر حقيقيّ بقناة نشطة؛ وهذا هو شرط النشر الوحيد.
+    //   • update: الإشراف يغيّر حالة المخالفة فقط، والناشر يملك تعديل
+    //     منشوره كاملاً (النوع/الملف/النص/قسم قناته) دون هوية القناة.
+    //   • delete: اللوحة (إزالة مخالف) أو الناشر نفسه.
+    match /ugc_contents/{contentId} {
+      allow read: if true;
+      allow create: if isRealUser()
+        && isValidUgcContent()
+        && contentId == request.resource.data.id
+        && get(/databases/$(database)/documents/ugc_channels/$(request.auth.uid))
+            .data.status == 'active';
+      allow update: if (hasDashboardWrite()
+            && request.resource.data.diff(resource.data).affectedKeys()
+                .hasOnly(['status', 'channelStatus', 'updated_at']))
+        || (isRealUser()
+            && request.resource.data.diff(resource.data).affectedKeys()
+                .hasOnly(['commentsCount']))
+        || (isRealUser()
+            && request.resource.data.diff(resource.data).affectedKeys()
+                .hasOnly(['reactionsCount'])
+            && ((request.resource.data.reactionsCount
+                    == resource.data.get('reactionsCount', 0) + 1
+                  && existsAfter(/databases/$(database)/documents/ugc_contents/$(contentId)/reactions/$(request.auth.uid)))
+                || (request.resource.data.reactionsCount
+                    == resource.data.get('reactionsCount', 0) - 1
+                  && !existsAfter(/databases/$(database)/documents/ugc_contents/$(contentId)/reactions/$(request.auth.uid)))))
+        || (isSignedIn()
+            && request.resource.data.diff(resource.data).affectedKeys()
+                .hasOnly(['view_count', 'view_days', 'last_played_at'])
+            && request.resource.data.view_count
+                == resource.data.get('view_count', 0) + 1)
+        || (isRealUser()
+            && resource.data.channelId == request.auth.uid
+            && request.resource.data.diff(resource.data).affectedKeys()
+                .hasOnly(['title', 'description', 'content_type',
+                          'source_url', 'fileSize', 'thumbnail',
+                          'storage_path', 'channel_section_id',
+                          'channel_section_name', 'updated_at'])
+            && request.resource.data.title is string
+            && request.resource.data.title.size() >= 3
+            && request.resource.data.title.size() <= 120
+            && request.resource.data.description is string
+            && request.resource.data.description.size() <= 20000
+            && request.resource.data.content_type
+                in ['audio', 'video', 'document', 'article']
+            && request.resource.data.source_url is string
+            && request.resource.data.source_url.matches(
+                'https://firebasestorage[.]googleapis[.]com/.*')
+            && request.resource.data.fileSize is int
+            && request.resource.data.fileSize >= 0
+            && request.resource.data.thumbnail is string
+            && (request.resource.data.thumbnail == ''
+                || request.resource.data.thumbnail.matches(
+                    'https://firebasestorage[.]googleapis[.]com/.*'))
+            && request.resource.data.storage_path is string
+            && request.resource.data.storage_path.matches(
+                'ugc/' + request.auth.uid + '/.*')
+            && request.resource.data.channel_section_id is string
+            && request.resource.data.channel_section_id.size() <= 100
+            && request.resource.data.channel_section_name is string
+            && request.resource.data.channel_section_name.size() <= 60);
+      allow delete: if hasDashboardWrite()
+        || (isRealUser() && resource.data.channelId == request.auth.uid);
+
+      // تعليقات — على محتوى المجتمع **فقط** (لا تعليقات على الرسميّ):
+      //   • حذف التعليق: كاتبه، أو صاحب المنشور (إشراف على قناته مثل
+      //     YouTube)، أو اللوحة.
+      match /comments/{commentId} {
+        allow read: if true;
+        allow create: if isRealUser()
+          && request.resource.data.keys().hasOnly(
+              ['uid', 'name', 'photoUrl', 'text', 'createdAt'])
+          && request.resource.data.uid == request.auth.uid
+          && request.resource.data.text is string
+          && request.resource.data.text.size() > 0
+          && request.resource.data.text.size() <= 500;
+        allow update: if false;
+        allow delete: if hasDashboardWrite()
+          || (isRealUser() && resource.data.uid == request.auth.uid)
+          || (isRealUser()
+              && get(/databases/$(database)/documents/ugc_contents/$(contentId))
+                  .data.channelId == request.auth.uid);
+      }
+
+      // إعجاب واحد لكل حساب حقيقيّ. لا نكشف قائمة المتفاعلين علناً؛
+      // يستطيع المستخدم قراءة وثيقة تفاعله فقط، بينما تعرض الواجهة العدّاد.
+      match /reactions/{reactionUid} {
+        allow read: if isRealUser() && request.auth.uid == reactionUid;
+        allow create: if isRealUser()
+          && request.auth.uid == reactionUid
+          && request.resource.data.keys().hasOnly(['uid', 'createdAt'])
+          && request.resource.data.uid == request.auth.uid;
+        allow update: if false;
+        allow delete: if (isRealUser() && request.auth.uid == reactionUid)
+          || (isRealUser()
+              && get(/databases/$(database)/documents/ugc_contents/$(contentId))
+                  .data.channelId == request.auth.uid);
+      }
+    }
+
+    // ─── deny-by-default ────────────────────────────────────────
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

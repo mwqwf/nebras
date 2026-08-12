@@ -1,0 +1,9 @@
+{
+	"private": true,
+	"name": "nebras-dashboard-repo",
+	"scripts": {
+		"dev": "npm run dev --prefix Nebras_dashboard-main/dashboard",
+		"build": "npm run build --prefix Nebras_dashboard-main/dashboard",
+		"preview": "npm run preview --prefix Nebras_dashboard-main/dashboard"
+	}
+}
